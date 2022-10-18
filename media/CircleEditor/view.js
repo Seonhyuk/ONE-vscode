@@ -72,6 +72,7 @@ view.View = class {
                 this._selection = [];
                 this._selectionNodes = [];  // selection of view.Node
                 this._sidebar = new sidebar.Sidebar(this._host, id);
+                this._jsonEditor = new jsonEditor.jsonEditor(this._host, id);
                 this._searchText = '';
                 this._theme = undefined;
                 this._scrollToSelected = true;  // TODO add menu for this
@@ -732,6 +733,7 @@ view.View = class {
     open(context) {
         this._host.event('Model', 'Open', 'Size', context.stream ? context.stream.length : 0);
         this._sidebar.close();
+        this._jsonEditor.close();
         return this._timeout(2).then(() => {
             return this._modelFactoryService.open(context).then((model) => {
                 const format = [];
@@ -771,6 +773,7 @@ view.View = class {
 
     _updateActiveGraph(graph) {
         this._sidebar.close();
+        this._jsonEditor.close();
         if (this._model) {
             const model = this._model;
             this.show('welcome spinner');
@@ -1099,6 +1102,9 @@ view.View = class {
     }
 
     showModelProperties() {
+        if (this._jsonEditor) {
+            this._jsonEditor.close();
+        }
         if (this._model) {
             try {
                 const modelSidebar =
@@ -1122,7 +1128,18 @@ view.View = class {
         }
     }
 
+    showJsonEditor() {
+        if (this._sidebar) {
+            this._sidebar.close();
+        }
+        this._jsonEditor.open();
+    }
+
     showNodeProperties(node, input) {
+        if (this._jsonEditor) {
+            this._jsonEditor.close();
+        }
+
         if (node) {
             try {
                 const nodeSidebar = new sidebar.NodeSidebar(this._host, node);
@@ -1182,6 +1199,10 @@ view.View = class {
     }
 
     showDocumentation(type) {
+        if (this._jsonEditor) {
+            this._jsonEditor.close();
+        }
+        
         if (type && (type.description || type.inputs || type.outputs || type.attributes)) {
             if (type.nodes && type.nodes.length > 0) {
                 this.pushGraph(type);

@@ -152,6 +152,15 @@ host.BrowserHost = class {
                 case 'setCustomOpAttrT':
                     this._msgSetCustomOpAttrT(message);
                     break;
+                case 'loadJsonStart':
+                    this._msgLoadJsonStart(message);
+                    break;
+                case 'loadJsonCurrentPage':
+                    this._msgLoadJsonCurrentPage(message);
+                    break;
+                case 'responseEncodingData':
+                    this._msgGetBuffer(message);
+                    break;
             }
         });
 
@@ -171,6 +180,11 @@ host.BrowserHost = class {
                 {label: 'Find...', accelerator: 'CmdOrCtrl+F', click: () => this._view.find()});
             this._menu.add({});
         }
+        this._menu.add({
+            label: () => 'JSON Editor',
+            accelerator: 'Alt+J',
+            click: () => this._view.showJsonEditor()
+        });
         this._menu.add({
             label: () => this._view.options.attributes ? 'Hide Attributes' : 'Show Attributes',
             accelerator: 'CmdOrCtrl+D',
@@ -555,6 +569,20 @@ host.BrowserHost = class {
                 }
             }
         }
+    }
+
+    _msgLoadJsonStart(message) {
+        const data = message.data;
+        this._view._jsonEditor._activate(data);
+    }
+
+    _msgLoadJsonCurrentPage() {
+        // TODO
+    }
+
+    _msgGetBuffer(message) {
+        const output = this._document.getElementById('output');
+        output.value = message.data.join(', ');
     }
 };
 
