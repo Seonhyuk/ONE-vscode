@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 import {CircleGraphCtrl, CircleGraphEvent, MessageDefs} from '../CircleGraph/CircleGraphCtrl';
+import {Balloon} from '../Utils/Balloon';
 
 
 /**
@@ -43,11 +44,35 @@ class VisqViewer extends CircleGraphCtrl implements CircleGraphEvent {
       case MessageDefs.visq:
         this.sendVisq(this._document.visq);
         break;
+      case MessageDefs.export:
+        this.exportToFile(message);
+        break;
     }
   }
 
   public owner(panel: vscode.WebviewPanel) {
     return this._panel === panel;
+  }
+
+  private exportToFile(message: any) {
+    if (!Object.prototype.hasOwnProperty.call(message, 'file')) {
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(message, 'data')) {
+      return;
+    }
+    // NOTE message.file is absolute path
+    let uri = vscode.Uri.file(message.file);
+    let content = Uint8Array.from(message.data);
+
+    vscode.workspace.fs.writeFile(uri, content)
+        .then(
+            () => {
+              Balloon.info('Export done: ' + path.basename(message.file));
+            },
+            (err) => {
+              Balloon.info('Export error: ' + err);
+            });
   }
 }
 
@@ -83,6 +108,7 @@ export class VisqViewerDocument implements vscode.CustomDocument {
   private _visqViewer: VisqViewer|undefined;
   private _visqJson: any = undefined;
   private _modelPath = '';
+  private _reloadTimer: NodeJS.Timer|undefined;
 
   static async create(uri: vscode.Uri):
       Promise<VisqViewerDocument|PromiseLike<VisqViewerDocument>> {
@@ -92,6 +118,7 @@ export class VisqViewerDocument implements vscode.CustomDocument {
   private constructor(uri: vscode.Uri) {
     this._uri = uri;
     this._visqViewer = undefined;
+    this._reloadTimer = undefined;
   }
 
   public get uri() {
@@ -100,6 +127,15 @@ export class VisqViewerDocument implements vscode.CustomDocument {
 
   public get visq() {
     return this._visqJson;
+  }
+
+  private makeModelPath() {
+    this._modelPath = this._visqJson.meta.model;
+    if (!path.isAbsolute(this._modelPath)) {
+      // model is relative, make it relative to .visq.json file
+      let visqPath = path.parse(this.uri.fsPath);
+      this._modelPath = path.join(visqPath.dir, this._visqJson.meta.model);
+    }
   }
 
   // CustomDocument implements
@@ -114,12 +150,19 @@ export class VisqViewerDocument implements vscode.CustomDocument {
     const fileData = fs.readFileSync(visqPath, {encoding: 'utf8', flag: 'r'});
     this._visqJson = JSON.parse(fileData);
 
-    this._modelPath = this._visqJson.meta.model;
-    if (!path.isAbsolute(this._modelPath)) {
-      // model is relative, make it relative to .visq.json file
-      let visqPath = path.parse(this.uri.fsPath);
-      this._modelPath = path.join(visqPath.dir, this._visqJson.meta.model);
+    this.makeModelPath();
+  }
+
+  private reloadVisqText(text: string) {
+    let visqjson = JSON.parse(text);
+    // TODO find better compare for updated file and current data
+    if (this._visqJson && JSON.stringify(this._visqJson) === JSON.stringify(visqjson)) {
+      return false;
     }
+    this._visqJson = visqjson;
+    // model path can be changed
+    this.makeModelPath();
+    return true;
   }
 
   public openView(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
@@ -142,6 +185,22 @@ export class VisqViewerDocument implements vscode.CustomDocument {
     });
 
     return view;
+  }
+
+  public reload(text: string) {
+    // NOTE using timer here is to avoid rapid reloads and wait for some
+    // short time. 500msec here can be adjusted for better user experience.
+    if (this._reloadTimer) {
+      clearTimeout(this._reloadTimer);
+    }
+    this._reloadTimer = setTimeout(() => {
+      if (this.reloadVisqText(text)) {
+        if (this._visqViewer) {
+          this._visqViewer.setModel(this._modelPath);
+          this._visqViewer.loadContent();
+        }
+      }
+    }, 500);
   }
 }
 
@@ -179,7 +238,6 @@ export class VisqViewerProvider implements vscode.CustomReadonlyEditorProvider<V
     const document: VisqViewerDocument = await VisqViewerDocument.create(uri);
     // NOTE as a readonly viewer, there is not much to do
 
-    // TODO handle file change events
     // TODO handle backup
 
     return document;
@@ -190,5 +248,14 @@ export class VisqViewerProvider implements vscode.CustomReadonlyEditorProvider<V
       document: VisqViewerDocument, webviewPanel: vscode.WebviewPanel,
       _token: vscode.CancellationToken): Promise<void> {
     document.openView(webviewPanel, this._context.extensionUri);
+
+    const onChangeTextDoc = vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.uri.toString() === document.uri.toString()) {
+        document.reload(e.document.getText());
+      }
+    });
+    webviewPanel.onDidDispose(() => {
+      onChangeTextDoc.dispose();
+    });
   }
 }

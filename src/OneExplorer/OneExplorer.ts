@@ -14,15 +14,13 @@
  * limitations under the License.
  */
 
-import * as assert from 'assert';
+import {assert} from 'chai';
 import * as fs from 'fs';
 import * as path from 'path';
-import {TextEncoder} from 'util';
 import * as vscode from 'vscode';
 
 import {CfgEditorPanel} from '../CfgEditor/CfgEditorPanel';
-import {Balloon} from '../Utils/Balloon';
-import {obtainWorkspaceRoot} from '../Utils/Helpers';
+import {obtainWorkspaceRoots} from '../Utils/Helpers';
 import {Logger} from '../Utils/Logger';
 
 import {ArtifactAttr} from './ArtifactLocator';
@@ -32,56 +30,12 @@ import {OneStorage} from './OneStorage';
 export {
   BaseModelNode as _unit_test_BaseModelNode,
   ConfigNode as _unit_test_ConfigNode,
-
   DirectoryNode as _unit_test_DirectoryNode,
-  getCfgList as _unit_test_getCfgList,
-
   NodeFactory as _unit_test_NodeFactory,
   NodeType as _unit_test_NodeType,
   OneNode as _unit_test_OneNode,
   ProductNode as _unit_test_ProductNode,
 };
-
-/**
- * TODO Remove
- *
- * Get the list of .cfg files wiithin the workspace
- * @param root  the file or directory,
- *              which MUST exist in the file system
- */
-function getCfgList(root: string = obtainWorkspaceRoot()): string[] {
-  /**
-   * Returns every file inside directory
-   * @todo Check soft link
-   * @param root
-   * @returns
-   */
-  const readdirSyncRecursive = (root: string): string[] => {
-    if (fs.statSync(root).isFile()) {
-      return [root];
-    }
-
-    let children: string[] = [];
-    if (fs.statSync(root).isDirectory()) {
-      fs.readdirSync(root).forEach(val => {
-        children = children.concat(readdirSyncRecursive(path.join(root, val)));
-      });
-    }
-    return children;
-  };
-
-  try {
-    fs.statSync(root);
-  } catch {
-    Logger.error('OneExplorer', 'getCfgList', 'called on not existing directory or file.');
-    return [];
-  }
-
-  // Get the list of all the cfg files inside workspace root
-  const cfgList = readdirSyncRecursive(root).filter(val => val.endsWith('.cfg'));
-
-  return cfgList;
-}
 
 /**
  * NOTE
@@ -111,7 +65,7 @@ function getCfgList(root: string = obtainWorkspaceRoot()): string[] {
  * the config file.
  *
  */
-enum NodeType {
+export enum NodeType {
   /**
    * A directory which contains one or more baseModel.
    */
@@ -137,8 +91,9 @@ enum NodeType {
   product,
 }
 
-abstract class Node {
+export abstract class Node {
   abstract readonly type: NodeType;
+  public readonly id: string;
   /**
    * @protected _childNodes
    * `undefined` when it's not build yet.
@@ -158,6 +113,7 @@ abstract class Node {
   abstract canHide: boolean;
 
   constructor(uri: vscode.Uri, parent: Node|undefined) {
+    this.id = Math.random().toString();
     this._childNodes = undefined;
     this.uri = uri;
     this._parent = parent;
@@ -175,6 +131,10 @@ abstract class Node {
 
     this._buildChildren();
     return this._childNodes!;
+  }
+
+  resetChildren(): void {
+    this._childNodes = undefined;
   }
 
   get path(): string {
@@ -200,32 +160,35 @@ abstract class Node {
 }
 
 class NodeFactory {
-  static create(type: NodeType, fpath: string, parent: Node|undefined, attr?: ArtifactAttr): Node
-      |undefined {
-    // WHY HIDDEN NODES ARE NOT TO BE CREATED?
-    //
-    // A 'TreeDataProvider<element>' expects every elements (Node) to be correspond to visible
-    // TreeItem, so let's not build hidden nodes.
-    if (attr && attr?.canHide && OneTreeDataProvider.didHideExtra) {
-      return undefined;
-    }
-
+  static create(type: NodeType, fpath: string, parent: Node|undefined, attr?: ArtifactAttr): Node {
     const uri = vscode.Uri.file(fpath);
 
     let node: Node;
-    if (type === NodeType.directory) {
-      assert.strictEqual(attr, undefined, 'Directory nodes cannot have attributes');
-      node = new DirectoryNode(uri, parent);
-    } else if (type === NodeType.baseModel) {
-      node = new BaseModelNode(uri, parent, attr?.openViewType, attr?.icon, attr?.canHide);
-    } else if (type === NodeType.config) {
-      assert.strictEqual(attr, undefined, 'Config nodes cannot have attributes');
-      node = new ConfigNode(uri, parent);
-    } else if (type === NodeType.product) {
-      node = new ProductNode(uri, parent, attr?.openViewType, attr?.icon, attr?.canHide);
-    } else {
-      throw Error('Undefined NodeType');
+    switch (type) {
+      case NodeType.directory: {
+        assert.strictEqual(attr, undefined, 'Directory nodes cannot have attributes');
+        node = new DirectoryNode(uri, parent);
+        break;
+      }
+      case NodeType.baseModel: {
+        node = new BaseModelNode(uri, parent, attr?.openViewType, attr?.icon, attr?.canHide);
+        break;
+      }
+      case NodeType.config: {
+        assert.strictEqual(attr, undefined, 'Config nodes cannot have attributes');
+        node = new ConfigNode(uri, parent);
+        break;
+      }
+      case NodeType.product: {
+        node = new ProductNode(uri, parent, attr?.openViewType, attr?.icon, attr?.canHide);
+        break;
+      }
+      default: {
+        throw Error('Undefined NodeType');
+      }
     }
+
+    OneStorage.insert(node);
 
     return node;
   }
@@ -430,12 +393,14 @@ class ProductNode extends Node {
 
 export class OneNode extends vscode.TreeItem {
   constructor(
-      public readonly label: string,
       public readonly collapsibleState: vscode.TreeItemCollapsibleState,
       public readonly node: Node,
   ) {
-    super(label, collapsibleState);
+    super(node.name, collapsibleState);
 
+    this.id = node.id;
+    this.resourceUri = node.uri;
+    this.description = true;
     this.tooltip = `${this.node.path}`;
 
     if (node.openViewType) {
@@ -467,46 +432,44 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
 
   private fileWatcher = vscode.workspace.createFileSystemWatcher(`**/*`);
 
-  private _tree: DirectoryNode|undefined;
-  private _nodeMap: Map<string, Node> = new Map<string, Node>();
+  private _tree: Node[]|undefined;
+  private _workspaceRoots: vscode.Uri[] = [];
 
   public static didHideExtra: boolean = false;
 
   public static register(context: vscode.ExtensionContext) {
-    let workspaceRoot: vscode.Uri|undefined = undefined;
-
-    // TODO: do error handling in one function (helper function or here)
-    try {
-      workspaceRoot = vscode.Uri.file(obtainWorkspaceRoot());
-      Logger.info('OneExplorer', `workspace: ${workspaceRoot.fsPath}`);
-    } catch (e: unknown) {
-      if (e instanceof Error) {
-        if (e.message === 'Need workspace') {
-          Logger.info('OneExplorer', e.message);
-        } else {
-          Logger.error('OneExplorer', e.message);
-          Balloon.error('Something goes wrong while setting workspace.', true);
-        }
-      } else {
-        Logger.error('OneExplorer', 'Unknown error has been thrown.');
-      }
-    }
-
-    const provider = new OneTreeDataProvider(workspaceRoot, context.extension.extensionKind);
+    const provider = new OneTreeDataProvider(context.extension.extensionKind);
 
     const _treeView = vscode.window.createTreeView(
         'OneExplorerView',
         {treeDataProvider: provider, showCollapseAll: true, canSelectMany: true});
 
     let registrations = [
-      provider.fileWatcher.onDidCreate(() => provider.refresh()),
-      provider.fileWatcher.onDidChange(() => provider.refresh()),
-      provider.fileWatcher.onDidDelete(() => provider.refresh()),
+      provider.fileWatcher.onDidCreate((_uri: vscode.Uri) => {
+        provider.refresh();
+      }),
+      provider.fileWatcher.onDidChange((_uri: vscode.Uri) => {
+        // TODO Handle by each node types
+        provider.refresh();
+      }),
+      provider.fileWatcher.onDidDelete((uri: vscode.Uri) => {
+        const node = OneStorage.getNode(uri.fsPath);
+        if (!node) {
+          return;
+        }
+
+        OneStorage.delete(node, true);
+        provider.refresh(node.parent);
+      }),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        provider._workspaceRoots = obtainWorkspaceRoots().map(root => vscode.Uri.file(root));
+        provider.refresh();
+      }),
       _treeView,
       vscode.commands.registerCommand(
           'one.explorer.revealInOneExplorer',
           (path: string) => {
-            const node = provider._nodeMap.get(path);
+            const node = OneStorage.getNode(path);
             if (node) {
               _treeView ?.reveal(node, {select: true, focus: true, expand: true});
             }
@@ -533,14 +496,16 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
           }),
       vscode.commands.registerCommand('one.explorer.delete', (node: Node) => provider.delete(node)),
       vscode.commands.registerCommand('one.explorer.rename', (node: Node) => provider.rename(node)),
+      vscode.commands.registerCommand(
+          'one.explorer.refactor', (node: Node) => provider.refactor(node)),
     ];
 
     if (provider.isLocal) {
       registrations = [
-        ...[vscode.commands.registerCommand(
-                'one.explorer.openContainingFolder',
-                (node: Node) => provider.openContainingFolder(node)),
-      ]
+        ...registrations,
+        vscode.commands.registerCommand(
+            'one.explorer.openContainingFolder',
+            (node: Node) => provider.openContainingFolder(node)),
       ];
     } else {
       vscode.commands.executeCommand('setContext', 'one:extensionKind', 'Workspace');
@@ -549,8 +514,8 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
     registrations.forEach(disposable => context.subscriptions.push(disposable));
   }
 
-  constructor(
-      private workspaceRoot: vscode.Uri|undefined, private _extensionKind: vscode.ExtensionKind) {
+  constructor(private _extensionKind: vscode.ExtensionKind) {
+    this._workspaceRoots = obtainWorkspaceRoots().map(root => vscode.Uri.file(root));
     vscode.commands.executeCommand(
         'setContext', 'one.explorer:didHideExtra', OneTreeDataProvider.didHideExtra);
   }
@@ -589,7 +554,8 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
 
     vscode.commands.executeCommand(
         'setContext', 'one.explorer:didHideExtra', OneTreeDataProvider.didHideExtra);
-    this.refresh();
+
+    this.refresh(undefined, false);
   }
 
   /**
@@ -600,7 +566,8 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
 
     vscode.commands.executeCommand(
         'setContext', 'one.explorer:didHideExtra', OneTreeDataProvider.didHideExtra);
-    this.refresh();
+
+    this.refresh(undefined, false);
   }
 
   /**
@@ -608,14 +575,15 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
    * @command one.explorer.refresh
    * @param node A start node to rebuild. The sub-tree under the node will be rebuilt.
    *                If not given, the whole tree will be rebuilt.
+   * @param clear A flag whether to clear the stored node data or not.
    */
-  refresh(node?: Node): void {
-    OneStorage.reset();
-
+  refresh(node?: Node, clear: boolean = true): void {
     if (!node) {
-      // Reset the root in order to build from scratch (at OneTreeDataProvider.getTree)
-      this._tree = undefined;
-      this._nodeMap.clear();
+      if (clear) {
+        OneStorage.reset();
+        // Reset the root in order to build from scratch (at OneTreeDataProvider.getTree)
+        this._tree = undefined;
+      }
       this._onDidChangeTreeData.fire(undefined);
     } else {
       this._onDidChangeTreeData.fire(node);
@@ -632,21 +600,28 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
   }
 
   /**
-   * Rename a file
-   * @note Renaming is only allowed for config files as it has no impact on the explorer view.
-   * @command one.explorer.rename
-   * @todo prohibit special characters from new name for security ('..', '*', etc)
+   * @brief A helper function to show input box to ask a new file name
    */
-  rename(node: Node): void {
-    assert.ok(node.type === NodeType.config);
+  private askNewName = (node: Node) => {
+    return vscode.window.showInputBox({
+      title: 'Enter a file name:',
+      value: `${path.basename(node.uri.fsPath)}`,
+      valueSelection:
+          [0, path.basename(node.uri.fsPath).length - path.parse(node.uri.fsPath).ext.length],
+      placeHolder: `Enter a new name for ${path.basename(node.uri.fsPath)}`,
+      validateInput: this.validateNewPath(node)
+    });
+  };
 
-    if (node.type !== NodeType.config) {
-      return;
-    }
-
-    const oldpath = node.path;
-
-    const validateInputPath = (newname: string): string|undefined => {
+  /**
+   * @brief A helper function to validate the given path
+   * It checks whether
+   * (1) the new path has the same ext
+   * (2) the new path already exists
+   */
+  private validateNewPath = (node: Node): (newname: string) => string | undefined => {
+    return (newname: string): string|undefined => {
+      const oldpath = node.path;
       const dirpath = path.dirname(node.uri.fsPath);
       const newpath: string = path.join(dirpath, newname);
       if (!newname.endsWith(path.extname(oldpath))) {
@@ -661,24 +636,90 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
             newname} already exists at this location. Please choose a different name.`;
       }
     };
+  };
 
-    const askNewName = () => vscode.window.showInputBox({
-      title: 'Enter a file name:',
-      value: `${path.basename(node.uri.fsPath)}`,
-      valueSelection:
-          [0, path.basename(node.uri.fsPath).length - path.parse(node.uri.fsPath).ext.length],
-      placeHolder: `Enter a new name for ${path.basename(node.uri.fsPath)}`,
-      validateInput: validateInputPath
-    });
+  /**
+   * Rename a file
+   * @note Renaming is only allowed for config files as it has no impact on the explorer view.
+   * @command one.explorer.rename
+   * @todo prohibit special characters from new name for security ('..', '*', etc)
+   */
+  rename(node: Node): void {
+    assert.ok(node.type === NodeType.config);
 
-    askNewName().then(newname => {
+    if (node.type !== NodeType.config) {
+      return;
+    }
+
+    this.askNewName(node).then(newname => {
       if (newname) {
         const dirpath = path.dirname(node.uri.fsPath);
         const newpath = `${dirpath}/${newname}`;
-        vscode.workspace.fs.rename(node.uri, vscode.Uri.file(newpath)).then(() => {
-          this.refresh();
-        });
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.renameFile(node.uri, vscode.Uri.file(newpath));
+        vscode.workspace.applyEdit(edit);
       }
+    });
+  }
+
+  /**
+   * Refactor BaseModel or Product(TBD)
+   * It renames the file and changes the corresponding path in its referring config files.
+   * @command one.explorer.refactor
+   * @todo support refactoring of Product
+   * @todo prohibit special characters from new name for security ('..', '*', etc)
+   */
+  async refactor(node: Node): Promise<void> {
+    assert.ok(node.type === NodeType.baseModel);
+
+    // Ask the new name of the model file
+    const newname = await this.askNewName(node);
+    if (!newname) {
+      return;
+    }
+
+    const newpath = `${path.dirname(node.uri.fsPath)}/${newname}`;
+    const children = node.getChildren();
+
+    // If it has no child, simply rename it
+    if (children.length === 0) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.renameFile(node.uri, vscode.Uri.file(newpath));
+      vscode.workspace.applyEdit(edit);
+      return;
+    }
+
+    // Ask whether the user want to change the config files
+    const askChangingCfgs = () => vscode.window.showInformationMessage(
+        `Change corresponding fields in these following files?`, {
+          detail: `${children.length} file(s): ${children.map(node => ' ' + node.name).toString()}`,
+          modal: true
+        },
+        'Yes');
+
+    if (!await askChangingCfgs()) {
+      return;
+    }
+
+    // Refactor config files
+    const refactorCfgs = () => {
+      return Promise.all(children.map(child => {
+        const cfgObj = OneStorage.getCfgObj(child.path);
+        if (cfgObj) {
+          const oldpath = node.path;
+          return cfgObj.updateBaseModelField(oldpath, newpath).then(() => {
+            Logger.info('OneExplorer', `Replaced ${oldpath} with ${newpath} in ${child.path}`);
+          });
+        }
+        return undefined;
+      }));
+    };
+
+    refactorCfgs().then(() => {
+      const edit = new vscode.WorkspaceEdit();
+      edit.renameFile(node.uri, vscode.Uri.file(newpath));
+      vscode.workspace.applyEdit(edit);
     });
   }
 
@@ -700,26 +741,23 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
 
     let detail: string|undefined;
     let approval: string;
-    let useTrash: boolean;
 
     if (this.isRemote) {
-      // NOTE(dayo)
-      // By experience, the file is not deleted with 'useTrash:true' option.
       approval = 'Delete';
       detail = 'The file will be deleted permanently.';
-      useTrash = false;
     } else {
       approval = 'Move to Trash';
       detail = `You can restore this file from the Trash.`;
-      useTrash = true;
     }
 
     vscode.window.showInformationMessage(title, {detail: detail, modal: true}, approval)
         .then(ans => {
           if (ans === approval) {
             Logger.info('OneExplorer', `Delete '${node.name}'.`);
-            vscode.workspace.fs.delete(node.uri, {recursive: recursive, useTrash: useTrash})
-                .then(() => this.refresh());
+
+            const edit = new vscode.WorkspaceEdit();
+            edit.deleteFile(node.uri, {recursive: recursive, ignoreIfNotExists: true});
+            vscode.workspace.applyEdit(edit);
           }
         });
   }
@@ -737,14 +775,12 @@ export class OneTreeDataProvider implements vscode.TreeDataProvider<Node> {
     const modelName = path.parse(node.path).name;
     const extName = path.parse(node.path).ext.slice(1);
 
-    const encoder = new TextEncoder;
     // TODO(dayo) Auto-configure more fields
-    const content = encoder.encode(`
-[onecc]
+    const content = `[onecc]
 one-import-${extName}=True
 [one-import-${extName}]
 input_path=${modelName}.${extName}
-`);
+`;
 
     const validateInputPath = (cfgName: string): string|undefined => {
       const cfgPath: string = path.join(dirPath, cfgName);
@@ -773,25 +809,23 @@ input_path=${modelName}.${extName}
             return;
           }
 
+          // 'uri' path is not occupied, assured by validateInputPath
           const uri = vscode.Uri.file(`${dirPath}/${value}`);
 
-          // 'uri' path is not occupied, assured by validateInputPath
-          vscode.workspace.fs.writeFile(uri, content)
-              .then(() => {
-                return new Promise<vscode.Uri>(resolve => {
-                  this.refresh(node);
+          const edit = new vscode.WorkspaceEdit();
+          edit.createFile(uri);
+          edit.insert(uri, (new vscode.Position(0, 0)), content);
 
-                  // Wait until the refresh event listeners are handled
-                  // TODO: Add an event after revising refresh commmand
-                  setTimeout(() => resolve(uri), 200);
-                });
-              })
-              .then((uri) => {
-                return Promise.all([
-                  vscode.commands.executeCommand('list.expand', uri),
-                  vscode.commands.executeCommand('vscode.openWith', uri, CfgEditorPanel.viewType)
-                ]);
+          vscode.workspace.applyEdit(edit).then(isSuccess => {
+            if (isSuccess) {
+              vscode.workspace.openTextDocument(uri).then(document => {
+                document.save();
+                vscode.commands.executeCommand('vscode.openWith', uri, CfgEditorPanel.viewType);
               });
+            } else {
+              Logger.error('OneExplorer', 'CreateCfg', `Failed to create the file ${uri}`);
+            }
+          });
         });
   }
 
@@ -806,12 +840,11 @@ input_path=${modelName}.${extName}
 
   getTreeItem(node: Node): OneNode {
     if (node.type === NodeType.directory) {
-      return new OneNode(node.name, vscode.TreeItemCollapsibleState.Expanded, node);
+      return new OneNode(vscode.TreeItemCollapsibleState.Expanded, node);
     } else if (node.type === NodeType.product) {
-      return new OneNode(node.name, vscode.TreeItemCollapsibleState.None, node);
+      return new OneNode(vscode.TreeItemCollapsibleState.None, node);
     } else if (node.type === NodeType.baseModel || node.type === NodeType.config) {
       return new OneNode(
-          node.name,
           (node.getChildren().length > 0) ? vscode.TreeItemCollapsibleState.Collapsed :
                                             vscode.TreeItemCollapsibleState.None,
           node);
@@ -820,41 +853,32 @@ input_path=${modelName}.${extName}
     }
   }
 
+  /**
+   * Note that vscode TreeDataProvider does build the tree by:
+   * (1) getting children nodes from getChildren() and
+   * (2) mapping the nodes to OneNode(Tree Item) using getTreeItem()
+   * Therefore, to decide whether to display node or not, getChildren() should make decision.
+   */
   getChildren(element?: Node): vscode.ProviderResult<Node[]> {
     if (!element) {
-      element = this.getTree();
+      return this.getTree();
     }
 
-    return element ?.getChildren();
+    return OneTreeDataProvider.didHideExtra ? element.getChildren().filter(node => !node.canHide) :
+                                              element.getChildren();
   }
 
   /**
    * Get the root of the tree
    */
-  private getTree(): Node|undefined {
-    if (!this.workspaceRoot) {
+  private getTree(): Node[]|undefined {
+    if (!this._workspaceRoots || this._workspaceRoots.length === 0) {
       return undefined;
     }
 
     if (!this._tree) {
-      this._tree = NodeFactory.create(NodeType.directory, this.workspaceRoot.fsPath, undefined) as
-          DirectoryNode;
-
-      // NOTE That this change reverts the 'build children on demand' optimization.
-      //
-      // 'buildNodeMap' is required for revealing the corresponding TreeItem when a cfg file is
-      // opened in cfg editor, because it pre-builts all the nodes to find the Node from a given
-      // string path.
-      //
-      // TODO Let's try to build nodes on demand (only with string path)
-      const buildNodeMap = (node: Node) => {
-        node.getChildren().forEach(childNode => {
-          this._nodeMap.set(childNode.path, childNode);
-          buildNodeMap(childNode);
-        });
-      };
-
-      buildNodeMap(this._tree);
+      this._tree = this._workspaceRoots.map(
+          root => NodeFactory.create(NodeType.directory, root.fsPath, undefined) as DirectoryNode);
     }
 
     return this._tree;

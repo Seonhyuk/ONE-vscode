@@ -1004,6 +1004,27 @@ view.View = class {
         }
     }
 
+    applyStyleSheetVisq(element) {
+        if (this._host._mode === viewMode.visq) {
+            let rules = [];
+            for (const styleSheet of this._host.document.styleSheets) {
+                if (styleSheet.title === 'visq_style') {
+                    Array.prototype.push.apply(rules, styleSheet.cssRules);
+                }
+            }
+            const nodes = element.getElementsByTagName('*');
+            for (const node of nodes) {
+                for (const rule of rules) {
+                    if (node.matches(rule.selectorText)) {
+                        for (const item of rule.style) {
+                            node.style[item] = rule.style[item];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     export(file) {
         const lastIndex = file.lastIndexOf('.');
         const extension = (lastIndex !== -1) ? file.substring(lastIndex + 1) : '';
@@ -1011,6 +1032,7 @@ view.View = class {
             const canvas = this._getElementById('canvas');
             const clone = canvas.cloneNode(true);
             this.applyStyleSheet(clone, 'view-grapher.css');
+            this.applyStyleSheetVisq(clone);
             clone.setAttribute('id', 'export');
             clone.removeAttribute('viewBox');
             clone.removeAttribute('width');
@@ -1333,6 +1355,7 @@ view.Node = class extends grapher.Node {
         view.Node.counter = view.Node.counter || 0;
         this.id = 'node-' +
             (value.name ? 'name-' + value.name : 'id-' + (view.Node.counter++).toString());
+        this._visq(this.value);
         this._add(this.value);
     }
 
@@ -1350,6 +1373,26 @@ view.Node = class extends grapher.Node {
         return this.value.outputs;
     }
 
+    _visq(node) {
+        const host = this.context.view._host;
+        if (host._mode !== viewMode.visq) {
+            return;
+        }
+
+        if (node.outputs) {
+            // TODO revise this with multiple outputs
+            node.outputs.forEach((output) => {
+                output._arguments.forEach((arg) => {
+                    // NOTE name is tensor_name + tensor_index, in circle.js
+                    const mixed = arg._name.split(/\n/);
+                    const nodeName = mixed[0];
+                    node.visq_error = host.visqValue(nodeName);
+                    node.visq_index = host.visqIndex(nodeName);
+                });
+            });
+        }
+    }
+
     _add(node) {
         // NOTE this.context = view.Graph
         //      this.context.view = view
@@ -1361,6 +1404,16 @@ view.Node = class extends grapher.Node {
         if (category) {
             if (host._mode === viewMode.viewer) {
                 styles.push('node-item-type-' + category.toLowerCase());
+            }
+        }
+        let visqSuffix = undefined;
+        if (host._mode === viewMode.visq) {
+            if (node.visq_index) {
+                let qstyle = `node-item-type-visq-${node.visq_index}`;
+                styles.push(qstyle);
+            }
+            if (node.visq_error) {
+                visqSuffix = ` (${node.visq_error})`;
             }
         }
         if (typeof type.name !== 'string' || !type.name.split) {  // #416
@@ -1377,7 +1430,8 @@ view.Node = class extends grapher.Node {
         const tooltip = this.context.view.options.names && (node.name || node.location) ?
             type.name :
             (node.name || node.location);
-        const title = header.add(null, styles, content, tooltip);
+        const contentVisq = visqSuffix ? content + visqSuffix : content;
+        const title = header.add(null, styles, contentVisq, tooltip);
 
         if (host._mode === viewMode.viewer || host._mode === viewMode.visq) {
             title.on('click', () => this.context.view.showNodeProperties(node, null));

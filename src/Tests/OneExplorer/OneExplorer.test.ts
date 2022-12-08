@@ -17,7 +17,7 @@
 import {assert} from 'chai';
 import * as vscode from 'vscode';
 
-import {_unit_test_BaseModelNode as BaseModelNode, _unit_test_ConfigNode as ConfigNode, _unit_test_getCfgList as getCfgList, _unit_test_NodeFactory as NodeFactory, _unit_test_NodeType as NodeType, _unit_test_OneNode as OneNode, _unit_test_ProductNode as ProductNode} from '../../OneExplorer/OneExplorer';
+import {_unit_test_BaseModelNode as BaseModelNode, _unit_test_ConfigNode as ConfigNode, _unit_test_NodeFactory as NodeFactory, _unit_test_NodeType as NodeType, _unit_test_OneNode as OneNode, _unit_test_ProductNode as ProductNode} from '../../OneExplorer/OneExplorer';
 import {TestBuilder} from '../TestBuilder';
 
 suite('OneExplorer', function() {
@@ -32,59 +32,6 @@ suite('OneExplorer', function() {
       testBuilder.tearDown();
     });
 
-    suite('#getCfgList()', function() {
-      test('NEG: get empty cfg list', function() {
-        const cfgList = getCfgList(testBuilder.getPath(''));
-        { assert.strictEqual(cfgList.length, 0); }
-      });
-
-      test('NEG: get cfg list on not existing path', function() {
-        const cfgList = getCfgList(testBuilder.getPath(''));
-        { assert.strictEqual(cfgList.length, 0); }
-      });
-
-      test('get cfg list', function() {
-        const configName1 = 'test1.cfg';
-        const configName2 = 'test2.cfg';
-
-        // Write a file inside temp directory
-        testBuilder.writeFileSync(configName1, '');
-        testBuilder.writeFileSync(configName2, '');
-
-        // Get file paths inside the temp directory
-        const configPath1 = testBuilder.getPath(configName1);
-        const configPath2 = testBuilder.getPath(configName2);
-
-        const cfgList = getCfgList(testBuilder.getPath(''));
-        {
-          assert.isTrue(cfgList.includes(configPath1));
-          assert.isTrue(cfgList.includes(configPath2));
-        }
-      });
-
-      test('get cfg list recursively', function() {
-        const configName1 = 'test1/test1.cfg';
-        const configName21 = 'test2/test2.1.cfg';
-        const configName22 = 'test2/test2.2.cfg';
-
-        // Write a file inside temp directory
-        testBuilder.writeFileSync(configName1, '');
-        testBuilder.writeFileSync(configName21, '');
-        testBuilder.writeFileSync(configName22, '');
-
-        // Get file paths inside the temp directory
-        const configPath1 = testBuilder.getPath(configName1);
-        const configPath21 = testBuilder.getPath(configName21);
-        const configPath22 = testBuilder.getPath(configName22);
-
-        const cfgList = getCfgList(testBuilder.getPath(''));
-        {
-          assert.isTrue(cfgList.includes(configPath1));
-          assert.isTrue(cfgList.includes(configPath21));
-          assert.isTrue(cfgList.includes(configPath22));
-        }
-      });
-    });
 
     suite('#NodeFactory', function() {
       test('NEG: create a directory node with attributes', function() {
@@ -119,8 +66,8 @@ suite('OneExplorer', function() {
         // Validation
         {
           const dirNode = NodeFactory.create(NodeType.directory, dirPath, undefined);
-          assert.strictEqual(dirNode!.getChildren().length, 1);
-          assert.strictEqual(dirNode!.getChildren()[0].path, baseModelPath);
+          assert.strictEqual(dirNode.getChildren().length, 1);
+          assert.strictEqual(dirNode.getChildren()[0].path, baseModelPath);
         }
       });
 
@@ -130,35 +77,34 @@ suite('OneExplorer', function() {
         });
       });
 
-      test('create a base model node with cfg', function() {
+      test('create a base model node outside workspace', function() {
         const baseModelName = 'test.tflite';
         const configName = `test.cfg`;
 
-        // Write a file inside temp directory
-        // and get file paths inside the temp directory
         testBuilder.writeFileSync(baseModelName, '');
-        const baseModelPath = testBuilder.getPath(baseModelName);
+        const baseModelPath = testBuilder.getPath(baseModelName);         // in /tmp
+        const configPath = testBuilder.getPath(configName, 'workspace');  // in workspace
 
+        // Find a base model outside workspace by locating its absolute path
         testBuilder.writeFileSync(
             configName, `
 [one-import-tflite]
-input_file=${baseModelPath}
+input_path=${baseModelPath}
         `,
             'workspace');
 
-        const configPath = testBuilder.getPath(configName, 'workspace');
 
         // Validation
         {
           const baseModelNode = NodeFactory.create(NodeType.baseModel, baseModelPath, undefined);
 
-          assert.strictEqual(baseModelNode!.openViewType, BaseModelNode.defaultOpenViewType);
-          assert.strictEqual(baseModelNode!.icon, BaseModelNode.defaultIcon);
-          assert.strictEqual(baseModelNode!.canHide, BaseModelNode.defaultCanHide);
+          assert.strictEqual(baseModelNode.openViewType, BaseModelNode.defaultOpenViewType);
+          assert.strictEqual(baseModelNode.icon, BaseModelNode.defaultIcon);
+          assert.strictEqual(baseModelNode.canHide, BaseModelNode.defaultCanHide);
 
-          assert.strictEqual(baseModelNode!.getChildren().length, 1);
-          assert.strictEqual(baseModelNode!.getChildren()[0].type, NodeType.config);
-          assert.strictEqual(baseModelNode!.getChildren()[0].path, configPath);
+          assert.strictEqual(baseModelNode.getChildren().length, 1);
+          assert.strictEqual(baseModelNode.getChildren()[0].type, NodeType.config);
+          assert.strictEqual(baseModelNode.getChildren()[0].path, configPath);
         }
       });
 
@@ -180,10 +126,10 @@ input_file=${baseModelPath}
         // Validation
         {
           const configNode = NodeFactory.create(NodeType.config, configPath, undefined);
-          assert.strictEqual(configNode!.openViewType, ConfigNode.defaultOpenViewType);
-          assert.strictEqual(configNode!.icon, ConfigNode.defaultIcon);
-          assert.strictEqual(configNode!.canHide, ConfigNode.defaultCanHide);
-          assert.strictEqual(configNode!.getChildren().length, 0);
+          assert.strictEqual(configNode.openViewType, ConfigNode.defaultOpenViewType);
+          assert.strictEqual(configNode.icon, ConfigNode.defaultIcon);
+          assert.strictEqual(configNode.canHide, ConfigNode.defaultCanHide);
+          assert.strictEqual(configNode.getChildren().length, 0);
         }
       });
 
@@ -205,10 +151,10 @@ input_file=${baseModelPath}
         // Validation
         {
           const productNode = NodeFactory.create(NodeType.product, productPath, undefined);
-          assert.strictEqual(productNode!.openViewType, ProductNode.defaultOpenViewType);
-          assert.strictEqual(productNode!.icon, ProductNode.defaultIcon);
-          assert.strictEqual(productNode!.canHide, ProductNode.defaultCanHide);
-          assert.strictEqual(productNode!.getChildren().length, 0);
+          assert.strictEqual(productNode.openViewType, ProductNode.defaultOpenViewType);
+          assert.strictEqual(productNode.icon, ProductNode.defaultIcon);
+          assert.strictEqual(productNode.canHide, ProductNode.defaultCanHide);
+          assert.strictEqual(productNode.getChildren().length, 0);
         }
       });
 
@@ -227,7 +173,7 @@ input_file=${baseModelPath}
         const directoryNode = NodeFactory.create(NodeType.directory, directoryPath, undefined);
         const productNode = NodeFactory.create(NodeType.product, productPath, directoryNode);
 
-        assert.strictEqual(productNode?.parent, directoryNode);
+        assert.strictEqual(productNode.parent, directoryNode);
       });
 
       test('NEG: get an empty parent', function() {
@@ -241,7 +187,7 @@ input_file=${baseModelPath}
 
         const productNode = NodeFactory.create(NodeType.product, productPath, undefined);
 
-        assert.strictEqual(productNode?.parent, undefined);
+        assert.strictEqual(productNode.parent, undefined);
       });
     });
 
@@ -249,8 +195,7 @@ input_file=${baseModelPath}
       test('constructor', function() {
         const directoryPath = testBuilder.getPath('');
         const directoryNode = NodeFactory.create(NodeType.directory, directoryPath, undefined);
-        const oneNode =
-            new OneNode('label', vscode.TreeItemCollapsibleState.Collapsed, directoryNode!);
+        const oneNode = new OneNode(vscode.TreeItemCollapsibleState.Collapsed, directoryNode);
         { assert.strictEqual(oneNode.contextValue, 'directory'); }
       });
     });

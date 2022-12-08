@@ -35,6 +35,7 @@ class CtrlStatus {
  * 'loadmodel'   incremental bidirectional loading model to webView
  * 'pageloaded'  window.load event is called
  * 'finishload'  load is finished and graph is ready
+ * 'export'      export image from webView to storage
  * 'selection'   when selection is changed from webView
  *               where 'names': containing tensor names of selected nodes
  *                     'tensors': containing tensor index of selected nodes
@@ -49,6 +50,7 @@ export class MessageDefs {
   public static readonly loadmodel = 'loadmodel';
   public static readonly finishload = 'finishload';
   public static readonly reload = 'reload';
+  public static readonly export = 'export';
   public static readonly selection = 'selection';
   public static readonly backendColor = 'backendColor';
   public static readonly error = 'error';
@@ -124,6 +126,10 @@ export class CircleGraphCtrl {
 
   public setMode(mode: string) {
     this._viewMode = mode;
+  }
+
+  public setModel(model: string) {
+    this._modelToLoad = model;
   }
 
   /**
@@ -356,7 +362,7 @@ export class CircleGraphCtrl {
     // necessary files from netron to work
     html = this.updateUri(html, webview, '%view-grapher.css%', 'view-grapher.css');
     html = this.updateUri(html, webview, '%view-sidebar.css%', 'view-sidebar.css');
-    html = this.updateExternalUri(html, webview, '%view-sidebar.js%', 'view-sidebar.js');
+    html = this.updateUri(html, webview, '%view-sidebar.js%', 'view-sidebar.js');
     html = this.updateUri(html, webview, '%view-grapher.js%', 'view-grapher.js');
     html = this.updateExternalUri(html, webview, '%dagre.js%', 'dagre.js');
     html = this.updateExternalUri(html, webview, '%base.js%', 'base.js');

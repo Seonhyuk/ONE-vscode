@@ -65,32 +65,53 @@ export class RealPath {
   }
 }
 
+export function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return JSON.stringify(error);
+}
+
 /**
  * @brief Get Workspace root folder as string
- * @note  will throw if not working in workspace mode.
+ * @return Return only the first workspaceFolder if multiple root exists, with showing a notfication
+ *         balloon. Throw if there is no workspace.
  */
 export function obtainWorkspaceRoot(): string {
   const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders) {
-    Logger.error(logTag, 'obtainWorkspaceRoot: NO workspaceFolders');
+
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    Logger.info(logTag, 'obtainWorkspaceRoot', 'No WorkspaceFolders');
     // TODO revise message
     throw new Error('Need workspace');
   }
 
-  // TODO support active workspace among the multiple workspaceFolders
   // TODO support multi-root workspace
   if (workspaceFolders.length > 1) {
     Balloon.info('Warning: Only the first workspace directory is currently supported');
   }
+
   const workspaceRoot = workspaceFolders[0].uri.path;
-  if (!workspaceRoot) {
-    Logger.error(logTag, 'obtainWorkspaceRoot: NO workspaceRoot');
-    // TODO revise message
-    throw new Error('Need workspace');
-  }
   Logger.debug(logTag, 'obtainWorkspaceRoot:', workspaceRoot);
 
   return workspaceRoot;
+}
+
+/**
+ * @brief Get a workspace root list as a string list
+ * @return Return an empty list when workspace is not set
+ * @note VSCode api says `vscode.workspace.workspaceFolders` is undefined when there is no
+ *       workspace. However, it's observed that an empty list is returned when workspace is not set.
+ *       Therefore, let's make it a uniform return here.
+ */
+export function obtainWorkspaceRoots(): string[] {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders) {
+    Logger.error(logTag, 'obtainWorkspaceRoots', 'workspaceFolders is undefined');
+    return [];
+  }
+
+  return workspaceFolders.map(ws => ws.uri.path);
 }
 
 export interface FileSelector {

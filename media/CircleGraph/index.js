@@ -85,6 +85,7 @@ host.BrowserHost = class {
         this._backends = [];
 
         // visq
+        this._visqMetric = undefined;
         this._visqScheme = [];
         this._visqError = undefined;
 
@@ -111,6 +112,10 @@ host.BrowserHost = class {
 
     get type() {
         return this._type;
+    }
+
+    get visqMetric() {
+        return this._visqMetric;
     }
 
     get agent() {
@@ -220,6 +225,19 @@ host.BrowserHost = class {
             accelerator: 'Shift+Backspace',
             click: () => this._view.resetZoom()
         });
+        if (this._mode === viewMode.visq) {
+            this._menu.add({});
+            this._menu.add({
+                label: 'Export as PNG',
+                accelerator: 'CmdOrCtrl+Shift+E',
+                click: () => this._view.export(this._modelPath + '.png')
+            });
+            this._menu.add({
+                label: 'Export as SVG',
+                accelerator: 'CmdOrCtrl+Alt+E',
+                click: () => this._view.export(this._modelPath + '.svg')
+            });
+        }
         this.document.getElementById('menu-button').addEventListener('click', (e) => {
             this._menu.toggle();
             e.preventDefault();
@@ -275,12 +293,12 @@ host.BrowserHost = class {
     }
 
     export(file, blob) {
-        const element = this.document.createElement('a');
-        element.download = file;
-        element.href = URL.createObjectURL(blob);
-        this.document.body.appendChild(element);
-        element.click();
-        this.document.body.removeChild(element);
+        var fileReader = new FileReader();
+        fileReader.onload = function() {
+            const data = new Uint8Array(this.result);
+            vscode.postMessage({command: 'export', file: file, type: blob.type, data: data});
+        };
+        fileReader.readAsArrayBuffer(blob);
     }
 
     request(file, encoding, base) {
@@ -345,6 +363,30 @@ host.BrowserHost = class {
             let v = this._view.getSelection();
             vscode.postMessage({command: 'selection', names: v.names, tensors: v.tensors});
         }
+    }
+
+    visqIndex(name) {
+        const visqNodes = this._visqError[0];
+        if (Object.prototype.hasOwnProperty.call(visqNodes, name)) {
+            let qerror = parseFloat(visqNodes[name]);
+            for (const idx in this._visqScheme) {
+                if (Object.prototype.hasOwnProperty.call(this._visqScheme, idx)) {
+                    let item = this._visqScheme[idx];
+                    if (item.b <= qerror && qerror < item.e) {
+                        return idx;
+                    }
+                }
+            }
+        }
+        return undefined;
+    }
+
+    visqValue(name) {
+        const visqNodes = this._visqError[0];
+        if (Object.prototype.hasOwnProperty.call(visqNodes, name)) {
+            return visqNodes[name];
+        }
+        return undefined;
     }
 
     _request(url, headers, encoding, timeout) {
@@ -557,6 +599,7 @@ host.BrowserHost = class {
     _msgVisq(message) {
         const visq = message.visq;
 
+        this._setVisqMetric(visq);
         this._setVisqStyle(visq);
         this._setVisqNodes(visq);
         this._addVisqLegends(visq);
@@ -590,29 +633,37 @@ host.BrowserHost = class {
         return Math.min(lum, 0xff);
     }
 
+    _setVisqMetric(visq) {
+        this._visqMetric = visq.meta.metric;
+    }
+
+
     _setVisqStyle(visq) {
-        let styleElement = document.createElement('style');
         let styleHTML = '';
         let index = 0;
         for (const idx in visq.meta.colorscheme) {
-            let item = visq.meta.colorscheme[idx];
-            this._visqScheme.push(item);
+            if (Object.prototype.hasOwnProperty.call(visq.meta.colorscheme, idx)) {
+                let item = visq.meta.colorscheme[idx];
+                this._visqScheme.push(item);
 
-            let color = item.c;
-            let add = `.node-item-type-visq-${index} path { fill: ${color}; }\n`;
-            styleHTML = styleHTML + add;
-            styleHTML = styleHTML + '.vscode-dark ' + add;
-            // text color depending on fill color luminance
-            let lum = this._colorLuminance(color);
-            let colorText = lum > 0x80 ? '#000' : '#fff';
-            add = `.node-item-type-visq-${index} text { fill: ${colorText}; }\n`;
-            styleHTML = styleHTML + add;
-            styleHTML = styleHTML + '.vscode-dark ' + add;
+                let color = item.c;
+                let add = `.node-item-type-visq-${index} path { fill: ${color}; }\n`;
+                styleHTML = styleHTML + add;
+                styleHTML = styleHTML + '.vscode-dark ' + add;
+                // text color depending on fill color luminance
+                let lum = this._colorLuminance(color);
+                let colorText = lum > 0x80 ? '#000' : '#fff';
+                add = `.node-item-type-visq-${index} text { fill: ${colorText}; }\n`;
+                styleHTML = styleHTML + add;
+                styleHTML = styleHTML + '.vscode-dark ' + add;
 
-            index = index + 1;
+                index = index + 1;
+            }
         }
-        styleElement.innerHTML = styleHTML;
-        document.getElementsByTagName('head')[0].appendChild(styleElement);
+        let style = this._document.createElement('style');
+        style.title = 'visq_style';
+        style.innerHTML = styleHTML;
+        this._document.head.appendChild(style);
     }
 
     _setVisqNodes(visq) {
@@ -623,17 +674,18 @@ host.BrowserHost = class {
         let legendDiv = document.getElementById('legend');
         let table = document.createElement('table');
         for (const idx in visq.meta.colorscheme) {
-            const item = visq.meta.colorscheme[idx];
-            const lum = this._colorLuminance(item.c);
-            const color = lum > 0x80 ? '#000' : '#fff';
-            const metric = visq.meta.metric;
-            let tr = document.createElement('tr');
-            let td = document.createElement('td');
-            td.innerText = `${metric} ${item.b} ~ ${item.e}`;
-            td.style.background = item.c;
-            td.style.color = color;
-            tr.appendChild(td);
-            table.appendChild(tr);
+            if (Object.prototype.hasOwnProperty.call(visq.meta.colorscheme, idx)) {
+                const item = visq.meta.colorscheme[idx];
+                const lum = this._colorLuminance(item.c);
+                const color = lum > 0x80 ? '#000' : '#fff';
+                let tr = document.createElement('tr');
+                let td = document.createElement('td');
+                td.innerText = `${this.visqMetric} ${item.b} ~ ${item.e}`;
+                td.style.background = item.c;
+                td.style.color = color;
+                tr.appendChild(td);
+                table.appendChild(tr);
+            }
         }
         legendDiv.appendChild(table);
         legendDiv.style.visibility = 'visible';
