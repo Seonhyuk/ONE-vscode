@@ -1,6 +1,4 @@
 var jsonEditor = jsonEditor || {};
-var tensorType = tensorType || {};
-var customType = customType || {};
 
 jsonEditor.jsonEditor = class {
 
@@ -17,23 +15,46 @@ jsonEditor.jsonEditor = class {
       }
     };
 
-    this._applyEditHandler = (e) => {
+    this._applyEditHandler = async (e) => {
       e.preventDefault();
-      const value = this._host.document.getElementById('jsonEditor-content');
+      const value = this._host.document.getElementById('json-editor-content');
       const data = value.value;
-      this._host._view._jsonEditorOpened = false;
-      vscode.postMessage({
+      // TODO 마지막 textarea 값 적용하기
+      let selected;
+
+      switch (this._content._selectedButton) {
+        case 0:
+          selected = 'options';
+          break;
+        case 1:
+          selected = 'subgraphs';
+          break;
+        case 2:
+          selected = 'buffers';
+          break;
+      }
+
+      await vscode.postMessage({
         command: 'updateJson',
+        type: 'partOfModel',
+        part: selected,
         data: data,
       });
+
+      await vscode.postMessage({
+        command: 'applyJsonToModel', 
+      });
+
+      this._host._view._jsonEditorOpened = false;
     };
   }
 
   open() {
     this.close();
-    vscode.postMessage({
-      command: 'loadJsonStart'
-    });
+    // vscode.postMessage({
+    //   command: 'openJsonEditor'
+    // });
+    this._activate();
   }
 
   close() {
@@ -42,8 +63,12 @@ jsonEditor.jsonEditor = class {
   }
 
   _hide() {
-    const jsonEditor = this._host.document.getElementById('jsonEditor');
+    const jsonEditor = this._host.document.getElementById('json-editor');
     if (jsonEditor) {
+      while (jsonEditor.childElementCount > 0) {
+        jsonEditor.removeChild(jsonEditor.lastChild);
+      }
+
       jsonEditor.style.width = '0px';
     }
     const container = this._host.document.getElementById('graph');
@@ -53,62 +78,51 @@ jsonEditor.jsonEditor = class {
     }
   }
 
+  _setIndexInfo(data) {
+    this._maxSubgraphIndex = data.subgraphLen;
+    this._maxBufferIndex = data.bufferLen;
+    this._activate();
+  }
+
   _deactivate() {
-    const jsonEditor = this._host.document.getElementById('jsonEditor');
+    const jsonEditor = this._host.document.getElementById('json-editor');
     if (jsonEditor) {
-      const closeButton = this._host.document.getElementById('jsonEditor-closebutton');
+      const closeButton = this._host.document.getElementById('json-editor-closebutton');
       if (closeButton) {
         closeButton.removeEventListener('click', this._closeJsonEditorHandler);
         closeButton.style.color = '#f8f8f8';
       }
-      const applyButton = this._host.document.getElementById('jsonEditor-applybutton');
+      const applyButton = this._host.document.getElementById('json-editor-applybutton');
       if (applyButton) {
         applyButton.removeEventListener('click', this._applyEditHandler);
       }
-
       this._host.document.removeEventListener('keydown', this._closeJsonEditorKeyDownHandler);
     }
   }
 
-  _activate(item) {
-    const jsonEditorBox = this._host.document.getElementById('jsonEditor');
+  _activate() {
+    const jsonEditorBox = this._host.document.getElementById('json-editor');
     if (jsonEditorBox) {
       jsonEditorBox.innerHTML = '';
 
-      const closeButton = this._host.document.createElement('a');
-      closeButton.classList.add('jsonEditor-closebutton');
-      closeButton.setAttribute('id', 'jsonEditor-closebutton');
-      closeButton.setAttribute('href', 'javascript:void(0)');
-      closeButton.innerHTML = '&times;';
-      closeButton.addEventListener('click', this._closeJsonEditorHandler);
-      // jsonEditorBox.appendChild(closeButton);
-
-      const applyButton = this._host.document.createElement('button');
-      applyButton.classList.add('jsonEditor-applybutton');
-      applyButton.setAttribute('id', 'jsonEditor-applybutton');
-      applyButton.addEventListener('click', this._applyEditHandler);
-      applyButton.innerHTML = 'apply';
-      // jsonEditorBox.appendChild(applyButton);
-
-			const title = this._host.document.createElement('div');
-			title.classList.add('json-editor-title');
-
-			const titleText = this._host.document.createElement('p');
-			titleText.classList.add('json-editor-title-text');
-			titleText.innerHTML = 'JSON Editor';
+      // 상단 타이틀 및 적용 닫기 버튼 부
+      const closeButton = this.makeCloseButton();
+      const applyButton = this.makeApplyButton();
+      const title = this.makeTitle();
 
       title.appendChild(applyButton);
       title.appendChild(closeButton);
 
-			title.appendChild(titleText);
 			jsonEditorBox.appendChild(title);
       
-      const content = new jsonEditor.content(this._host, item);
-      jsonEditorBox.appendChild(content.render());
+      // 중간 편집기 부분
+      this.content = new jsonEditor.content(this._host);
+      jsonEditorBox.appendChild(this.content.render());
 
       jsonEditorBox.style.width = 'min(calc(100% * 0.6), 800px)';
       this._host.document.addEventListener('keydown', this._closeJsonEditorKeyDownHandler);
 
+      // 계산기 부분
       const calculatorBox = new jsonEditor.Calculator(this._host).render();
       jsonEditorBox.appendChild(calculatorBox[0]);
     }
@@ -116,6 +130,45 @@ jsonEditor.jsonEditor = class {
     if (container) {
       container.style.width = 'max(40vw, calc(100vw - 800px))';
     }
+
+    vscode.postMessage({
+      command: 'loadJson',
+      type: 'partOfModel',
+      part: 'options'
+    });
+  }
+
+  makeCloseButton() {
+    const closeButton = this._host.document.createElement('a');
+    closeButton.classList.add('json-editor-closebutton');
+    closeButton.setAttribute('id', 'json-editor-closebutton');
+    closeButton.setAttribute('href', 'javascript:void(0)');
+    closeButton.innerHTML = '&times;';
+    closeButton.addEventListener('click', this._closeJsonEditorHandler);
+    
+    return closeButton;
+  }
+
+  makeApplyButton() {
+    const applyButton = this._host.document.createElement('button');
+    applyButton.classList.add('json-editor-applybutton');
+    applyButton.setAttribute('id', 'json-editor-applybutton');
+    applyButton.addEventListener('click', this._applyEditHandler);
+    applyButton.innerHTML = 'apply';
+
+    return applyButton;
+  }
+
+  makeTitle() {
+    const title = this._host.document.createElement('div');
+    title.classList.add('json-editor-title');
+
+    const titleText = this._host.document.createElement('p');
+    titleText.classList.add('json-editor-title-text');
+    titleText.innerHTML = 'JSON Editor';
+    title.appendChild(titleText);
+
+    return title;
   }
 };
 
@@ -124,6 +177,8 @@ jsonEditor.content = class {
     this._host = host;
     this._item = item;
     this._elements = [];
+
+    this._selectedButton = 0;
 
     this._tabEvent = (value) => {
       event.preventDefault();
@@ -135,74 +190,203 @@ jsonEditor.content = class {
       }
     };
 
-    const editor = host.document.createElement('div');
-		editor.setAttribute('id', 'editor-box');
+    this.editor = host.document.createElement('div');
+		this.editor.setAttribute('id', 'editor-box');
 
+    // 상단 버튼부
 		const buttonArea = host.document.createElement('div');
+    buttonArea.classList.add('btn-area');
 
-		const optionsButton = host.document.createElement('div');
-		optionsButton.classList.add('options');
-		optionsButton.classList.add('selectedArea');
-		const optionsButtonTitle = host.document.createElement('span');
-		optionsButtonTitle.innerHTML = 'options';
-		optionsButton.appendChild(optionsButtonTitle);
+    this.tabButtons = [
+      new jsonEditor.tabButton(this._host, 'options'),
+      new jsonEditor.tabButton(this._host, 'subgraphs'),
+      new jsonEditor.tabButton(this._host, 'buffers'),
+    ];
 
-		const subgraphsButton = host.document.createElement('div');
-		subgraphsButton.classList.add('subgraphs');
-		const subgraphsButtonTitle = host.document.createElement('span');
-		subgraphsButtonTitle.innerHTML = 'subgraphs';
-		subgraphsButton.appendChild(subgraphsButtonTitle);
+    this.tabButtons[0].activate();
 
-		const buffersButton = host.document.createElement('div');
-		buffersButton.classList.add('buffers');
-		const buffersButtonTitle = host.document.createElement('span');
-		buffersButtonTitle.innerHTML = 'buffers';
-		buffersButton.appendChild(buffersButtonTitle);
+		this.tabButtons.forEach((tabButton, index) => {
+      const renderedButton = tabButton.render();
+      renderedButton.addEventListener('click', () => {
+        this.changeSelect(index);
+      });
+      buttonArea.appendChild(renderedButton);
+    });
+    
+    // 편집부
+		this.editJsonArea = host.document.createElement('textarea');
+    this.editJsonArea.setAttribute('id', 'edit-area');
+		this.editJsonArea.classList.add('edit-area');
 
-		const moveLeftButton = host.document.createElement('button');
-		moveLeftButton.classList.add('page-move-left');
-		moveLeftButton.innerHTML = 'ᐊ';
-		const moveRightButton = host.document.createElement('button');
-		moveRightButton.classList.add('page-move-right');
-		moveRightButton.innerHTML = 'ᐅ';
+    //하단 페이지 선택부
+    this.editor.append(buttonArea, this.editJsonArea);
 
-		const selectedEditArea = host.document.createElement('div');
-		selectedEditArea.classList.add('select-page');
+    this._elements.push(this.editor);
+  }
 
-		const pageInput = host.document.createElement('input');
-		pageInput.setAttribute('type', 'text');
-		pageInput.setAttribute('value', '1');
-
-		const totalPage = host.document.createElement('span');
-		totalPage.innerHTML('/0');
-
-		selectedEditArea.appendChild(moveLeftButton);
-		selectedEditArea.appendChild(pageInput);
-		selectedEditArea.appendChild(totalPage);
-		selectedEditArea.appendChild(moveRightButton);
-
-		optionsButton.appendChild(selectedEditArea);
-
-		buttonArea.appendChild(optionsButton);
-		buttonArea.appendChild(subgraphsButton);
-		buttonArea.appendChild(buffersButton);
-
-		const editJsonArea = host.document.createElement('textarea');
-		editJsonArea.classList.add('edit-area');
-
-		const pageSelectArea = host.document.createElement('div');
-		const pageSelectBox = host.document.createElement('div');
-		pageSelectArea.appendChild(pageSelectBox);
-
+  setTextArea(data) {
+    this.editJsonArea.setAttribute('value', data);
   }
 
   render() {
     return this._elements[0];
   }
 
-	selectArea(e) {
-		e.target.classList.add('select');
-	}
+  changeSelect(num) {
+    if (this._selectedButton !== num) {
+      this._selectedButton = num;
+      this.tabButtons.forEach(tabButton => {
+        tabButton.deactivate();
+      });
+      this.tabButtons[num].activate();
+
+      if (this._selectedButton === 2) {
+        const pageSelectArea = this.makeDetailPageSelectArea();
+        this.editor.appendChild(pageSelectArea);
+      }
+    }
+  }
+
+  deactivate() {
+    this.optionsButton.removeEventListener('click', this.selectArea);
+    this.subgraphsButton.removeEventListener('click', this.selectArea);
+    this.buffersButton.removeEventListener('click', this.selectArea);
+  }
+
+  makeDetailPageSelectArea() {
+		const moveButton = this._host.document.createElement('button');
+		moveButton.classList.add('page-move');
+		moveButton.innerHTML = 'move';
+		const addButton = this._host.document.createElement('button');
+		addButton.classList.add('page-move');
+		addButton.innerHTML = 'add';
+
+		const selectedEditArea = this._host.document.createElement('div');
+		selectedEditArea.classList.add('detail-page-select');
+
+		const pageInput = this._host.document.createElement('input');
+    pageInput.classList.add('page-input');
+    pageInput.setAttribute('id', 'page-input');
+		pageInput.setAttribute('type', 'text');
+		pageInput.setAttribute('value', '1');
+
+		const totalPage = this._host.document.createElement('span');
+    totalPage.setAttribute('id', 'entire-page');
+		totalPage.innerHTML = '/0';
+
+		selectedEditArea.appendChild(pageInput);
+		selectedEditArea.appendChild(totalPage);
+    selectedEditArea.appendChild(moveButton);
+		selectedEditArea.appendChild(addButton);
+
+		return selectedEditArea;
+  }
+};
+
+jsonEditor.tabButton = class {
+  constructor(host, tabName) {
+    this._host = host;
+    this._tabName = tabName;
+    this._element = this.makeTabButton();
+  }
+
+  makeTabButton() {
+		const tabButton = this._host.document.createElement('div');
+		tabButton.classList.add('tab');
+		const tabButtonTitle = this._host.document.createElement('span');
+		tabButtonTitle.innerHTML = this._tabName;
+		tabButton.appendChild(tabButtonTitle);
+
+    return tabButton;
+  }
+
+  activate() {
+    this.makePageSelectArea();
+    this._element.classList.add('select');
+
+    vscode.postMessage({
+      command: 'loadJson', 
+      type: 'partOfModel', 
+      part: this._tabName,
+      currentIdx: 1,
+      pageIdx: 1,
+    });
+  }
+
+  getPage() {
+    const currentInput = this._host.document.getElementById('page-input');
+    const currentIdx = currentInput.innerText;
+
+    vscode.postMessage({
+      command: 'loadJson', 
+      type: 'partOfModel', 
+      part: this._tabName,
+      currentIdx: number(currentIdx),
+      pageIdx: 1,
+    });
+  }
+
+  deactivate() {
+    if (this._element.childElementCount > 1) {
+      this._element.removeChild(this._element.lastChild);
+      this._element.classList.remove('select');
+    }
+  }
+
+  setPage(pageNum, entirePageNum) {
+    const pageInput = this._host.document.getElementById('page-input');
+    pageInput.setAttribute('value', pageNum);
+
+    const totalPage = this._host.document.getElementById('entire-page');
+    totalPage.innerText = entirePageNum;
+  }
+
+  movePage() {
+    const pageNum = this._host.documnet.getElementById('page-input');
+    vscode.postMessage({
+      command: 'loadJson',
+      type: 'partOfModel',
+      part: this._tabName,
+      pageIdx: pageNum,
+    });
+  }
+
+  makePageSelectArea() {
+		const moveButton = this._host.document.createElement('button');
+		moveButton.classList.add('page-move');
+		moveButton.innerHTML = 'move';
+		const addButton = this._host.document.createElement('button');
+		addButton.classList.add('page-move');
+		addButton.innerHTML = 'add';
+
+		const selectedEditArea = this._host.document.createElement('div');
+		selectedEditArea.classList.add('page-select');
+
+		const pageInput = this._host.document.createElement('input');
+    pageInput.classList.add('page-input');
+    pageInput.setAttribute('id', 'page-input');
+		pageInput.setAttribute('type', 'text');
+		pageInput.setAttribute('value', '1');
+
+		const totalPage = this._host.document.createElement('span');
+    totalPage.setAttribute('id', 'entire-page');
+		totalPage.innerHTML = '/0';
+
+		selectedEditArea.appendChild(pageInput);
+		selectedEditArea.appendChild(totalPage);
+    selectedEditArea.appendChild(moveButton);
+		selectedEditArea.appendChild(addButton);
+
+		this._element.appendChild(selectedEditArea);
+  }
+
+  deletePageSelectArea() {
+
+  }
+
+  render() {
+    return this._element;
+  }
 };
 
 jsonEditor.Calculator = class {
@@ -212,31 +396,28 @@ jsonEditor.Calculator = class {
 
     this._editObject = {};
     
-    this._jsonEditorBox = this._host.document.getElementById('jsonEditor');
     this._calculatorBox = this.makeTag('div', 'calculator-box');
-    const calculatorNameBox = this.makeTag('div', 'calculator-name-box');
-    const calculatorName = this.makeTag('div', 'calculator-name');
     this._toggle = this.makeTag('div', 'toggle-button');
-    const navigator = this.makeTag('div', 'navigator');
-    const buttonArea = this.makeTag('div', 'button-area');
+
+    this._buttonArea = this.makeTag('div', 'button-area');
     this._bufferButton = this.makeTag('div', 'button');
     this._customOptionsButton = this.makeTag('div', 'button');
-
-    this._calculatorBox.style.height = "5%";
+    
+    const calculatorNameBox = this.makeTag('div', 'calculator-name-box');
+    const calculatorName = this.makeTag('div', 'calculator-name');
     
     this._toggle.innerText = '+';
     calculatorName.innerText = 'Calculator';
-    navigator.appendChild(calculatorNameBox);
+
+    this._calculatorBox.appendChild(calculatorNameBox);
     calculatorNameBox.appendChild(calculatorName);
     calculatorNameBox.appendChild(this._toggle);
 
     this._bufferButton.innerText = 'Buffer';
     this._customOptionsButton.innerText = 'Custom';
 
-    buttonArea.appendChild(this._bufferButton);
-    buttonArea.appendChild(this._customOptionsButton);
-    navigator.appendChild(buttonArea);
-    this._calculatorBox.appendChild(navigator);
+    this._buttonArea.appendChild(this._bufferButton);
+    this._buttonArea.appendChild(this._customOptionsButton);
 
     this._toggle.addEventListener('click', () => {
       this.toggle();
@@ -248,10 +429,11 @@ jsonEditor.Calculator = class {
   toggle() {
     if(this._toggle.innerText === '+') {
       this._toggle.innerText = '-';
-      const editBox = this._host.document.getElementById('jsonEditor-content');
-      editBox.style.height = '58%';
-      const div = this.makeTag('div');
-      this._jsonEditorBox.appendChild(div);
+      this._calculatorBox.appendChild(this._buttonArea);
+
+      const editBox = this._host.document.getElementById('editor-box');
+      editBox.style.height = 'calc(65% - 60px)';
+      this._calculatorBox.style.height = 'calc(35% + 30px)';
       
       this.buffer();
 
@@ -264,26 +446,25 @@ jsonEditor.Calculator = class {
       });
     } else {
       this._toggle.innerText = '+';
+      this._calculatorBox.removeChild(this._buttonArea);
 
-      const editBox = this._host.document.getElementById('jsonEditor-content');
-      editBox.style.height = 'calc(95% - 22px)';
+      const editBox = this._host.document.getElementById('editor-box');
+      editBox.style.height = 'calc(100% - 60px)';
 
-      this._calculatorBox.style.height = "5%";
+      this._calculatorBox.style.height = "30px";
 			
-			while (this._jsonEditorBox.childElementCount > 5) {
-				this._jsonEditorBox.removeChild(this._jsonEditorBox.lastChild);
+			while (this._calculatorBox.childElementCount > 1) {
+				this._calculatorBox.removeChild(this._calculatorBox.lastChild);
 			}
 		}
   }
 
   buffer() {
-    while (this._elements[0].childElementCount > 1) {
+    while (this._elements[0].childElementCount > 2) {
       this._elements[0].removeChild(this._elements[0].lastChild);
     }
-    this._jsonEditorBox.removeChild(this._jsonEditorBox.lastChild);
     this._bufferButton.className = 'button-selected';
     this._customOptionsButton.className = 'button';
-    this._calculatorBox.style.height = "calc(24% - 22px)";
     const expanderArea = this.makeTag('div', 'expander-area');
     const titleArea = this.makeTag('div', 'title-area');
     const inputTitle = this.makeTag('div', 'title');
@@ -325,7 +506,7 @@ jsonEditor.Calculator = class {
     outputLine.appendChild(clear);
     outputArea.appendChild(outputLine);
     this._calculatorBox.appendChild(expanderArea);
-    this._jsonEditorBox.appendChild(outputArea);
+    this._calculatorBox.appendChild(outputArea);
 
     this._output.setAttribute('readonly', 'true');
 
@@ -351,10 +532,9 @@ jsonEditor.Calculator = class {
   }
 
   customOptions() {
-    while (this._elements[0].childElementCount > 1) {
+    while (this._elements[0].childElementCount > 2) {
       this._elements[0].removeChild(this._elements[0].lastChild);
     }
-    this._jsonEditorBox.removeChild(this._jsonEditorBox.lastChild);
     this._bufferButton.className = 'button';
     this._customOptionsButton.className = 'button-selected';
     const expanderArea = this.makeTag('div', 'expander-area');
@@ -402,7 +582,10 @@ jsonEditor.Calculator = class {
     copy.addEventListener('click', () => {
       this.customOptionsCopy();
     });
-
+    
+    expanderArea.appendChild(this._inputArea);
+    this._calculatorBox.appendChild(expanderArea);
+    
     titleArea.appendChild(inputTitle);
     titleArea.appendChild(convert);
     expanderArea.appendChild(titleArea);
@@ -417,13 +600,10 @@ jsonEditor.Calculator = class {
     outputLine.appendChild(copy);
     outputLine.appendChild(clear);
     outputArea.appendChild(outputLine);
-    this._jsonEditorBox.appendChild(outputArea);
+    this._calculatorBox.appendChild(outputArea);
     
-
-    this._inputArea.appendChild(this.makeLine());
-    expanderArea.appendChild(this._inputArea);
     expanderArea.appendChild(plus);
-    this._calculatorBox.appendChild(expanderArea);
+    this._inputArea.appendChild(this.makeLine());
   }
 
   makeLine() {
@@ -500,7 +680,7 @@ jsonEditor.Calculator = class {
 
   makeTag(tag, className) {
     const temp = this._host.document.createElement(tag);
-    if(className){
+    if (className) {
       temp.className = className;
     }
 

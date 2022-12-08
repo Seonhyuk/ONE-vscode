@@ -152,11 +152,11 @@ host.BrowserHost = class {
                 case 'setCustomOpAttrT':
                     this._msgSetCustomOpAttrT(message);
                     break;
-                case 'loadJsonStart':
+                case 'modelIndexInfo':
                     this._msgLoadJsonStart(message);
                     break;
-                case 'loadJsonCurrentPage':
-                    this._msgLoadJsonCurrentPage(message);
+                case 'loadJsonMulti':
+                    this._msgLoadJsonMulti(message);
                     break;
                 case 'responseEncodingData':
                     this._msgGetBuffer(message);
@@ -573,11 +573,25 @@ host.BrowserHost = class {
 
     _msgLoadJsonStart(message) {
         const data = message.data;
-        this._view._jsonEditor._activate(data);
+        this._view._jsonEditor._setIndexInfo(data);
+        // this._view._jsonEditor._activate(data);
     }
 
-    _msgLoadJsonCurrentPage() {
+    _msgLoadJsonMulti(message) {
         // TODO
+        switch (message.type) {
+            case 'options':
+                this._view._jsonEditor.content.tabButton[0].setPage(1, 1);
+                break;
+            case 'subgraphs':
+                this._view._jsonEditor.content.tabButton[1].setPage(message.currentPage, message.totalSubgraph);
+                break;
+            case 'buffers':
+                this._view._jsonEditor.content.tabButton[1].setPage(message.bufferIdx, message.totalBuffer);
+                break;
+        }
+
+        this._view._jsonEditor.content.setTextArea(message.data);
     }
 
     _msgGetBuffer(message) {

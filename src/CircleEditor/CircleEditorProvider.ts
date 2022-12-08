@@ -221,6 +221,7 @@ export class CircleEditorProvider implements vscode.CustomEditorProvider<CircleE
     html = this.updateUri(html, webview, '%view-grapher.css%', 'view-grapher.css');
     html = this.updateUri(html, webview, '%view-sidebar.css%', 'view-sidebar.css');
     html = this.updateUri(html, webview, '%view-json-editor.css%', 'view-json-editor.css');
+    html = this.updateUri(html, webview, '%view-json-editor.css%', 'view-json-editor.css');
     html = this.updateUri(html, webview, '%type.js%', 'type.js');
     html = this.updateUri(html, webview, '%view-sidebar.js%', 'view-sidebar.js');
     html = this.updateUri(html, webview, '%view-grapher.js%', 'view-grapher.js');

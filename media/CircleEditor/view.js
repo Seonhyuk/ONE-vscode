@@ -53,6 +53,7 @@ var flatbuffers = flatbuffers || require('./flatbuffers');
 var python = python || require('./python');
 var sidebar = sidebar || require('./view-sidebar');
 var grapher = grapher || require('./view-grapher');
+var jsonEditor = jsonEditor || {};
 
 view.View = class {
     constructor(host, id) {
